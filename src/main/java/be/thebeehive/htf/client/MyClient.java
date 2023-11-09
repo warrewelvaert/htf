@@ -10,6 +10,7 @@ import be.thebeehive.htf.library.protocol.server.WarningServerMessage;
 
 import java.math.BigDecimal;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import java.util.logging.Level;
@@ -42,28 +43,78 @@ public class MyClient implements HtfClientListener {
      */
     @Override
     public void onGameRoundServerMessage(HtfClient client, GameRoundServerMessage msg) throws Exception {
-        LOGGER.info("Disruptor this round");
-        logDisruptors(msg.getDisruptors(), msg.getRoundId());
-
+        // Get the list of disruptors.
         List<GameRoundServerMessage.JungleDisruptor> disruptors = msg.getDisruptors();
+        int w1 = 23;
+        int w2 = 10;
+        int w3 = 54;
+        int w4 = 30;
+        int w5 = 1000;
 
-        Collections.sort(disruptors, (d1, d2) -> d2.getStats().get(0).getInitialDamage().compareTo(d1.getStats().get(0).getInitialDamage()));
+        List<WeightedDisruptor> weightedDisruptors = disruptors.stream()
+                .map(disruptor -> {
+                    double weight = (disruptor.getStats().get(0).getInitialDamage().doubleValue() * w1) +
+                            (disruptor.getStats().get(0).getRoundMultiplier().doubleValue() * w2) +
+                            (disruptor.getActivationChance().doubleValue() * w3);
 
-        // For example, you might decide to remove the disruptors with the highest initial damage.
-        List<Long> disruptorsToRemove = disruptors.stream()
-                .limit(msg.getDisruptorsToRemove())
-                .map(GameRoundServerMessage.JungleDisruptor::getId)
+                    // If max rounds is -1, treat it as infinite and assign a high value
+                    if (disruptor.getMaxRounds() == -1) {
+                        weight += w4 * w5;  // Assign a high value for infinite duration
+                    } else {
+                        weight += disruptor.getMaxRounds() * w4;
+                    }
+
+                    return new WeightedDisruptor(disruptor, weight);
+                })
                 .collect(Collectors.toList());
 
-        LOGGER.info("Disruptor to remove");
-        logDisruptors(disruptors.stream()
-                .filter(disruptor -> disruptorsToRemove.contains(disruptor.getId()))
-                .collect(Collectors.toList()), msg.getRoundId());
 
-        // Send a RemoveDisruptorsClientMessage with the IDs of the disruptors to remove.
-        client.send(new RemoveDisruptorsClientMessage(msg.getRoundId(), disruptorsToRemove));
+
+        // Sort the disruptors in descending order of their weights
+        List<WeightedDisruptor> sortedDisruptors = weightedDisruptors.stream()
+                .sorted(Comparator.comparing(WeightedDisruptor::getWeight).reversed())
+                .collect(Collectors.toList());
+
+        // Select the disruptors to remove based on the sorted list
+        List<Long> disruptorsToRemove = sortedDisruptors.stream()
+                .filter(disruptor -> msg.getOurJungle().getDisruptors().contains(disruptor.getDisruptor().getId())) // Only include disruptors that are in the client's jungle
+                .limit(msg.getDisruptorsToRemove())
+                .map(disruptor -> disruptor.getDisruptor().getId())
+                .collect(Collectors.toList());
+
+
+        // Log the disruptors to be removed
+        //LOGGER.info("Disruptors to be removed: " + disruptorsToRemove);
+
+        // Validate the disruptors to remove
+        DisruptorValidator disruptorValidator = new DisruptorValidator();
+        if (disruptorValidator.validateDisruptors(msg, disruptorsToRemove)) {
+            // Send a RemoveDisruptorsClientMessage with the IDs of the disruptors to remove.
+            client.send(new RemoveDisruptorsClientMessage(msg.getRoundId(), disruptorsToRemove));
+        } else {
+            // handle error
+            System.out.println("Error: Cannot remove the selected disruptors.");
+        }
+
     }
 
+    public static class WeightedDisruptor {
+        private final GameRoundServerMessage.JungleDisruptor disruptor;
+        private final double weight;
+
+        public WeightedDisruptor(GameRoundServerMessage.JungleDisruptor disruptor, double weight) {
+            this.disruptor = disruptor;
+            this.weight = weight;
+        }
+
+        public GameRoundServerMessage.JungleDisruptor getDisruptor() {
+            return disruptor;
+        }
+
+        public double getWeight() {
+            return weight;
+        }
+    }
 
     /**
      * You tried to perform an action that is not allowed.
@@ -72,11 +123,10 @@ public class MyClient implements HtfClientListener {
      */
     @Override
     public void onWarningServerMessage(HtfClient client, WarningServerMessage msg) throws Exception {
-        LOGGER.log(Level.INFO, "Invalid move");
+        LOGGER.log(Level.INFO, msg.getMsg());
     }
 
-    private void logDisruptors(List<GameRoundServerMessage.JungleDisruptor> dis, UUID roundId) {
-
+    private void logDisruptors(List<GameRoundServerMessage.JungleDisruptor> dis) {
         for (GameRoundServerMessage.JungleDisruptor disruptor : dis) {
             StringBuilder disruptorLog = new StringBuilder();
             disruptorLog.append("Disruptor Details:\n")
@@ -94,16 +144,29 @@ public class MyClient implements HtfClientListener {
         }
     }
 
-    private BigDecimal calculateTotalDamage(GameRoundServerMessage.JungleDisruptor disruptor, int rounds) {
-        BigDecimal totalDamage = BigDecimal.ZERO;
-        BigDecimal damage = disruptor.getStats().get(0).getInitialDamage();
+    public class DisruptorValidator {
 
-        for (int i = 0; i < rounds; i++) {
-            totalDamage = totalDamage.add(damage);
-            damage = damage.multiply(disruptor.getStats().get(0).getRoundMultiplier());
+        public boolean validateDisruptors(GameRoundServerMessage gameRoundServerMessage, List<Long> disruptorsToBeRemoved) {
+            int disruptorsToRemove = gameRoundServerMessage.getDisruptorsToRemove();
+            List<GameRoundServerMessage.JungleDisruptor> disruptors = gameRoundServerMessage.getDisruptors();
+
+            // Check the number of disruptors to remove
+            if (disruptorsToBeRemoved.size() > disruptorsToRemove) {
+                System.out.println("Error: Cannot remove more disruptors than allowed.");
+                return false;
+            }
+
+            // Check if disruptors are initialized
+            for (Long disruptorId : disruptorsToBeRemoved) {
+                boolean disruptorExists = disruptors.stream()
+                        .anyMatch(disruptor -> disruptor.getId() == disruptorId);
+
+                if (!disruptorExists) {
+                    System.out.println("Error: Cannot remove a disruptor that is not initialized.");
+                    return false;
+                }
+            }
+            return true;
         }
-
-        return totalDamage;
     }
-
 }
