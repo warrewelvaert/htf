@@ -8,7 +8,6 @@ import be.thebeehive.htf.library.protocol.server.GameEndedServerMessage;
 import be.thebeehive.htf.library.protocol.server.GameRoundServerMessage;
 import be.thebeehive.htf.library.protocol.server.WarningServerMessage;
 
-import java.math.BigDecimal;
 import java.util.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -31,7 +30,7 @@ public class MyClient implements HtfClientListener {
      */
     @Override
     public void onGameEndedServerMessage(HtfClient client, GameEndedServerMessage msg) throws Exception {
-        //LOGGER.log(Level.INFO, "Game ended at round: " + msg.getRound()) + "\n" + msg.getLeaderboard().get(0).toString());
+        LOGGER.log(Level.INFO, "Game ended at round: " + msg.getRound() + "\n" + msg.getLeaderboard().get(0).getName() + " won");
     }
 
     /**
@@ -39,14 +38,13 @@ public class MyClient implements HtfClientListener {
      * You must reply within 1 second!
      */
 
-    List<int[]> weightSets = Arrays.asList(new int[]{100, 100, 100, 300, 1000});
-        int iteration = 0;
-        int weightSetIndex = 0;
-        int switchThreshold = 1000;
+    List<int[]> weightSets = Arrays.asList(new int[]{5, 150, 200, 1000, 500}, new int[]{1, 150, 200, 500, 500});
+    int iteration = 0;
+    int weightSetIndex = 0;
+    int switchThreshold = 50;
 
     @Override
     public void onGameRoundServerMessage(HtfClient client, GameRoundServerMessage msg) throws Exception {
-        // Get the list of disruptors.
         List<GameRoundServerMessage.JungleDisruptor> disruptors = msg.getDisruptors();
         int[] weights = weightSets.get(weightSetIndex);
         int w1 = weights[0];
@@ -59,15 +57,12 @@ public class MyClient implements HtfClientListener {
                 .map(disruptor -> {
                     List<GameRoundServerMessage.JungleDisruptorStat> stats = disruptor.getStats();
 
-                    // Get initial damages
                     double initialDamage1 = stats.get(0).getInitialDamage().doubleValue();
                     double initialDamage2 = stats.size() > 1 ? stats.get(1).getInitialDamage().doubleValue() : 0;
 
-                    // Get round multipliers
                     double roundMultiplier1 = stats.get(0).getRoundMultiplier().doubleValue();
                     double roundMultiplier2 = stats.size() > 1 ? stats.get(1).getRoundMultiplier().doubleValue() : 0;
 
-                    // Calculate weight based on initial damages and round multipliers
                     double weight = 0;
                     if (initialDamage1 > 0) {
                         weight = (initialDamage1 * w1) + (roundMultiplier1 * w2) +
@@ -77,18 +72,18 @@ public class MyClient implements HtfClientListener {
                                 (disruptor.getActivationChance().doubleValue() * w3);
                     }
 
-                    // If a second initial damage exists, consider it
                     if (initialDamage2 != 0) {
                         if (initialDamage2 > 0) {
-                            weight -= roundMultiplier2 * w2;
+                            weight += (initialDamage2 * w1) + (roundMultiplier2 * w2) +
+                                    (disruptor.getActivationChance().doubleValue() * w3);
                         } else {
-                            weight += roundMultiplier2 * w2;
+                            weight += (initialDamage2 * w1) - (roundMultiplier2 * w2) -
+                                    (disruptor.getActivationChance().doubleValue() * w3);
                         }
                     }
 
-                    // If max rounds is -1, treat it as infinite and assign a high value
                     if (disruptor.getMaxRounds() == -1) {
-                        weight += w4 * w5; // Assign a high value for infinite duration
+                        weight += w4 * w5;
                     } else {
                         weight += disruptor.getMaxRounds() * w4;
                     }
@@ -99,26 +94,18 @@ public class MyClient implements HtfClientListener {
 
 
 
-        // Sort the disruptors in descending order of their weights
         List<WeightedDisruptor> sortedDisruptors = weightedDisruptors.stream()
                 .sorted(Comparator.comparing(WeightedDisruptor::getWeight).reversed())
                 .collect(Collectors.toList());
 
-        // Select the disruptors to remove based on the sorted list
         List<Long> disruptorsToRemove = sortedDisruptors.stream()
                 .filter(disruptor -> msg.getOurJungle().getDisruptors().contains(disruptor.getDisruptor().getId())) // Only include disruptors that are in the client's jungle
                 .limit(msg.getDisruptorsToRemove())
                 .map(disruptor -> disruptor.getDisruptor().getId())
                 .collect(Collectors.toList());
 
-
-        // Log the disruptors to be removed
-        //LOGGER.info("Disruptors to be removed: " + disruptorsToRemove);
-
-        // Validate the disruptors to remove
         DisruptorValidator disruptorValidator = new DisruptorValidator();
         if (disruptorValidator.validateDisruptors(msg, disruptorsToRemove)) {
-            // Send a RemoveDisruptorsClientMessage with the IDs of the disruptors to remove.
             client.send(new RemoveDisruptorsClientMessage(msg.getRoundId(), disruptorsToRemove));
             iteration++;
             if (iteration == switchThreshold) {
@@ -126,7 +113,6 @@ public class MyClient implements HtfClientListener {
                 iteration = 0;
             }
         } else {
-            // handle error
             System.out.println("Error: Cannot remove the selected disruptors.");
         }
     }
@@ -156,7 +142,7 @@ public class MyClient implements HtfClientListener {
      */
     @Override
     public void onWarningServerMessage(HtfClient client, WarningServerMessage msg) throws Exception {
-        //LOGGER.log(Level.INFO, msg.getMsg());
+        LOGGER.log(Level.INFO, msg.getMsg());
     }
 
     private void logDisruptors(WeightedDisruptor weightedDisruptor) {
@@ -182,13 +168,11 @@ public class MyClient implements HtfClientListener {
             int disruptorsToRemove = gameRoundServerMessage.getDisruptorsToRemove();
             List<GameRoundServerMessage.JungleDisruptor> disruptors = gameRoundServerMessage.getDisruptors();
 
-            // Check the number of disruptors to remove
             if (disruptorsToBeRemoved.size() > disruptorsToRemove) {
                 System.out.println("Error: Cannot remove more disruptors than allowed.");
                 return false;
             }
 
-            // Check if disruptors are initialized
             for (Long disruptorId : disruptorsToBeRemoved) {
                 boolean disruptorExists = disruptors.stream()
                         .anyMatch(disruptor -> disruptor.getId() == disruptorId);

@@ -13,7 +13,7 @@ public class Main {
         HtfClient client = new HtfClient(
                 "wss://htf.b9s.dev/ws",
                 "Felicitas5507",
-                EnvironmentType.SIMULATION,
+                EnvironmentType.LIVE,
                 new MyClient()
         );
         Runtime.getRuntime().addShutdownHook(new Thread(client::close));
