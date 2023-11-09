@@ -31,7 +31,7 @@ public class MyClient implements HtfClientListener {
      */
     @Override
     public void onGameEndedServerMessage(HtfClient client, GameEndedServerMessage msg) throws Exception {
-        LOGGER.log(Level.INFO, "Game ended at round: " + msg.getRound());
+        //LOGGER.log(Level.INFO, "Game ended at round: " + msg.getRound()) + "\n" + msg.getLeaderboard().get(0).toString());
     }
 
     /**
@@ -39,10 +39,10 @@ public class MyClient implements HtfClientListener {
      * You must reply within 1 second!
      */
 
-    List<int[]> weightSets = Arrays.asList(new int[]{100, 500, 600, 20, 20});
+    List<int[]> weightSets = Arrays.asList(new int[]{100, 100, 100, 300, 1000});
         int iteration = 0;
         int weightSetIndex = 0;
-        int switchThreshold = 10;  // Switch weights after 10 iterations
+        int switchThreshold = 1000;
 
     @Override
     public void onGameRoundServerMessage(HtfClient client, GameRoundServerMessage msg) throws Exception {
@@ -57,13 +57,38 @@ public class MyClient implements HtfClientListener {
 
         List<WeightedDisruptor> weightedDisruptors = disruptors.stream()
                 .map(disruptor -> {
-                    double weight = (disruptor.getStats().get(0).getInitialDamage().doubleValue() * w1) +
-                            (disruptor.getStats().get(0).getRoundMultiplier().doubleValue() * w2) +
-                            (disruptor.getActivationChance().doubleValue() * w3);
+                    List<GameRoundServerMessage.JungleDisruptorStat> stats = disruptor.getStats();
+
+                    // Get initial damages
+                    double initialDamage1 = stats.get(0).getInitialDamage().doubleValue();
+                    double initialDamage2 = stats.size() > 1 ? stats.get(1).getInitialDamage().doubleValue() : 0;
+
+                    // Get round multipliers
+                    double roundMultiplier1 = stats.get(0).getRoundMultiplier().doubleValue();
+                    double roundMultiplier2 = stats.size() > 1 ? stats.get(1).getRoundMultiplier().doubleValue() : 0;
+
+                    // Calculate weight based on initial damages and round multipliers
+                    double weight = 0;
+                    if (initialDamage1 > 0) {
+                        weight = (initialDamage1 * w1) + (roundMultiplier1 * w2) +
+                                (disruptor.getActivationChance().doubleValue() * w3);
+                    } else {
+                        weight = (initialDamage1 * w1) - (roundMultiplier1 * w2) -
+                                (disruptor.getActivationChance().doubleValue() * w3);
+                    }
+
+                    // If a second initial damage exists, consider it
+                    if (initialDamage2 != 0) {
+                        if (initialDamage2 > 0) {
+                            weight -= roundMultiplier2 * w2;
+                        } else {
+                            weight += roundMultiplier2 * w2;
+                        }
+                    }
 
                     // If max rounds is -1, treat it as infinite and assign a high value
                     if (disruptor.getMaxRounds() == -1) {
-                        weight += w4 * w5;  // Assign a high value for infinite duration
+                        weight += w4 * w5; // Assign a high value for infinite duration
                     } else {
                         weight += disruptor.getMaxRounds() * w4;
                     }
@@ -139,8 +164,7 @@ public class MyClient implements HtfClientListener {
         StringBuilder disruptorLog = new StringBuilder();
         disruptorLog.append("Disruptor Details:\n")
                 .append("ID: ").append(disruptor.getId()).append("\n")
-                .append("Weight: ").append(weightedDisruptor.weight).append("\n")
-                //.append("Init rounds: ").append(disruptor.getInitialRound()).append("\n")
+                .append("Weight: ").append((int)weightedDisruptor.weight).append("\n")
                 .append("Max rounds: ").append(disruptor.getMaxRounds()).append("\n")
                 .append("Activation chance: ").append(disruptor.getActivationChance()).append("\n");
 
